@@ -69,6 +69,29 @@ class DBManager {
     });
   }
 
+  updateColor(recording_id, frame_id, object_id, color) {
+    return new Promise((resolve, reject) => {
+      this.getDB().then(db => {
+        db.collection(TRACKER_COLLECTION).updateOne(
+          {
+            'recordingId': ObjectID(recording_id),
+            'frameId': frame_id,
+            'objects.id': object_id
+          },
+          { $set: { 'objects.$.color': color } },
+          (err, r) => {
+            if (err) {
+              reject(err);
+            } else {
+              resolve(r);
+            }
+          }
+        );
+      });
+    });
+  }
+
+
   getAppSettings() {
     return new Promise((resolve, reject) => {
       this.getDB().then(db => {

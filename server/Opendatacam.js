@@ -10,6 +10,9 @@ const Recording = require('./model/Recording');
 const DBManager = require('./db/DBManager');
 const Logger = require('./utils/Logger');
 const configHelper = require('./utils/configHelper');
+const { exec } = require('child_process');
+const getURLData = require('./utils/urlHelper').getURLData;
+const {PythonShell} = require("python-shell");
 
 // YOLO process max retries
 const HTTP_REQUEST_LISTEN_TO_YOLO_RETRY_DELAY_MS = 30;
@@ -54,6 +57,25 @@ const initialState = {
 }
 
 let Opendatacam = cloneDeep(initialState);
+
+let max_confidence_for_coloring = {};
+let process_within_n_frames = 10; // this should be less than number_of_frames_to_save from darknet (not sure what's a safe margin)
+let one_frame_per = 9;            // should be same as darknet value
+
+let pyshell = new PythonShell('script.py');
+
+pyshell.on('stderr', function (stderr) {
+  console.log(stderr)
+});
+
+pyshell.on('message', function (message) {
+    // Update the database, give a color to the car.
+    let python_response = JSON.parse(message)
+    DBManager.updateColor(
+      python_response.recordingId, python_response.frame_id, python_response.key, python_response.color
+    )
+    console.log(message)
+});
 
 module.exports = {
 
@@ -189,7 +211,8 @@ module.exports = {
           h: Math.round(trackerData.h),
           bearing: Math.round(trackerData.bearing),
           confidence: Math.round(trackerData.confidence * 100),
-          name: trackerData.name
+          name: trackerData.name,
+          color: ''
         }
       })
     }
@@ -312,6 +335,14 @@ module.exports = {
     // console.log(JSON.stringify(trackerDataForThisFrame));
     // console.log('=========')
 
+    // Color stuff 
+    if (Opendatacam.recordingStatus.isRecording) {
+      if (Opendatacam.recordingStatus.filename.length > 0 && frameId < 25) {
+      } else {
+        this._colorFunc(trackerDataForThisFrame, frameId);
+      }
+    }
+
     // Increment frame number
     Opendatacam.currentFrame++;
 
@@ -350,6 +381,55 @@ module.exports = {
 
   },
 
+  _colorFunc: function (trackerDataForThisFrame, frameId) {
+    if (frameId % one_frame_per != 0) return;
+
+    trackerDataForThisFrame.map((tracker_data) => {
+      if (max_confidence_for_coloring.hasOwnProperty(tracker_data.id)) {
+        var frame_counter = max_confidence_for_coloring[tracker_data.id].frame_counter + 1;
+      } else {
+        var frame_counter = 1;
+      }
+
+      // add if not existing / update if confidence higher
+      if (!max_confidence_for_coloring.hasOwnProperty(tracker_data.id) || tracker_data.confidence > max_confidence_for_coloring[tracker_data.id].confidence) {
+        max_confidence_for_coloring[tracker_data.id] = {
+          'frame_id': frameId,
+          'confidence': tracker_data.confidence,
+          'x': tracker_data.x,
+          'y': tracker_data.y,
+          'w': tracker_data.w,
+          'h': tracker_data.h
+        }
+      } 
+      max_confidence_for_coloring[tracker_data.id].frame_counter = frame_counter;
+    });
+
+    Object.entries(max_confidence_for_coloring).forEach((entry) => {
+      const [key, value] = entry;
+
+      // Delete old tracked objects
+      if (frameId >= (value.frame_id + (process_within_n_frames * one_frame_per)) * 1.5) {
+        delete max_confidence_for_coloring.key
+        return;
+      }
+
+      if (!value.hasOwnProperty('color') && frameId >= (value.frame_id + (process_within_n_frames * one_frame_per)) && value.frame_counter > 2 ) {
+        let python_message = {
+          'recordingId': Opendatacam.recordingStatus.recordingId,
+          'frame_id': value.frame_id,
+          'key': parseInt(key),
+          'x': value.x,
+          'y': value.y,
+          'w': value.w,
+          'h': value.h
+        }
+
+        pyshell.send(JSON.stringify(python_message));
+        max_confidence_for_coloring[key].color = 'set'
+      }
+    });
+  },
 
   runCountingLogic: function(trackerDataForThisFrame, frameId) {
 
@@ -513,7 +593,7 @@ module.exports = {
       })}\n\n`);
     } else {
       // Sending update to the client but it is not open
-      console.log('Sending update to the client but the SSE connexion is not open');
+      // console.log('Sending update to the client but the SSE connexion is not open');
     }
   },
 
