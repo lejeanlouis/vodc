@@ -137,7 +137,7 @@ echo "Installing OpenDataCam $VERSION for platform: $2 ..."
 if [ ! -f ./config.json ]; then
     # Get the config file
     echo "Download config file ..."
-    wget -N https://raw.githubusercontent.com/lejeanlouisle/opendatacam/$VERSION/config.json
+    wget -N https://raw.githubusercontent.com/lejeanlouisle/vodc/$VERSION/config.json
 
     # Replace VIDEO_INPUT and NEURAL_NETWORK with default config for this platform
     VIDEO_INPUT=${DEFAUT_VIDEO_INPUT_OPTIONS[$INDEX]}
